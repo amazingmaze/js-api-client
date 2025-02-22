@@ -1,11 +1,3 @@
-//import http2 from 'node:http2';
-import type * as nodeHttp2 from "node:http2";
-let http2: typeof nodeHttp2 | null = null;
-if (typeof process !== "undefined" && process.versions && process.versions.node) {
-  // Using top-level await (ES modules) to load http2 dynamically
-  http2 = await import("node:http2");
-}
-
 export type ClientConfiguration = {
     tenantIdentifier: string;
     tenantId?: string;
@@ -266,98 +258,8 @@ function shopApiCaller(grab: Grab, configuration: ClientConfiguration, options?:
 
 export function createClient(configuration: ClientConfiguration, options?: CreateClientOptions): ClientInterface {
     const identifier = configuration.tenantIdentifier;
-    const clients = new Map();
-    const IDLE_TIMEOUT = 300000; // 5 min idle timeout
     const grab: Grab = (url, grabOptions) => {
-        if (options?.useHttp2 !== true) {
-            return fetch(url, grabOptions);
-        }
-        const closeAndDeleteClient = (origin: string) => {
-            const clientObj = clients.get(origin);
-            if (clientObj) {
-                clientObj.client.close();
-                clients.delete(origin);
-            }
-        };
-
-        const resetIdleTimeout = (origin: string) => {
-            const clientObj = clients.get(origin);
-            if (clientObj && clientObj.idleTimeout) {
-                clearTimeout(clientObj.idleTimeout);
-            }
-            clientObj.idleTimeout = setTimeout(() => {
-                closeAndDeleteClient(origin);
-            }, IDLE_TIMEOUT);
-        };
-
-        const getClient = (origin: string): nodeHttp2.ClientHttp2Session => {
-            if (!clients.has(origin) || clients.get(origin).client.closed) {
-                closeAndDeleteClient(origin);
-                if (!http2) {
-                    // If we requested HTTP/2 but we're not running in Node, throw an error.
-                    throw new Error("HTTP/2 is not available in this environment. Ensure 'useHttp2' is false.");
-                }
-                const client = http2.connect(origin);
-                client.on('error', () => {
-                    closeAndDeleteClient(origin);
-                });
-                clients.set(origin, { client, idleTimeout: null });
-                resetIdleTimeout(origin);
-            }
-            return clients.get(origin).client;
-        };
-
-        return new Promise((resolve, reject) => {
-            const urlObj = new URL(url);
-            const origin = urlObj.origin;
-            const client = getClient(origin);
-            resetIdleTimeout(origin);
-            const headers = {
-                ':method': grabOptions.method || 'GET',
-                ':path': urlObj.pathname + urlObj.search,
-                ...grabOptions.headers,
-            };
-            const req = client.request(headers);
-            if (grabOptions.body) {
-                req.write(grabOptions.body);
-            }
-            req.setEncoding('utf8');
-            let responseData = '';
-
-            req.on('response', (headers) => {
-                const responseHeaders: Record<string, string | string[] | undefined> = {};
-                for (const name in headers) {
-                    responseHeaders[name.toLowerCase()] = headers[name];
-                }
-                const status = headers[':status'] || 500; // Default to 500 if undefined
-                const statusText = statusTexts[status as keyof typeof statusTexts] || '';
-                const response = {
-                    status,
-                    statusText,
-                    ok: status >= 200 && status < 300,
-                    headers: {
-                        get: (name: string) => responseHeaders[name.toLowerCase()],
-                    },
-                    text: () => Promise.resolve(responseData),
-                    json: () => Promise.resolve(JSON.parse(responseData)),
-                };
-
-                req.on('data', (chunk) => {
-                    responseData += chunk;
-                });
-
-                req.on('end', () => {
-                    resetIdleTimeout(origin);
-                    resolve(response);
-                });
-
-                req.on('error', (err) => {
-                    resetIdleTimeout(origin);
-                    reject(err);
-                });
-            });
-            req.end();
-        });
+        return fetch(url, grabOptions);
     };
 
     // let's rewrite the configuration based on the need of the endpoint
@@ -421,14 +323,7 @@ export function createClient(configuration: ClientConfiguration, options?: Creat
             tenantIdentifier: configuration.tenantIdentifier,
             origin: configuration.origin,
         },
-        close: () => {
-            clients.forEach((clientObj) => {
-                if (clientObj.idleTimeout) {
-                    clearTimeout(clientObj.idleTimeout);
-                }
-                clientObj.client.close();
-            });
-            clients.clear();
+        close: () => {  
         },
     };
 }
