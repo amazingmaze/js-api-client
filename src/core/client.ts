@@ -1,4 +1,10 @@
-import http2 from 'node:http2';
+//import http2 from 'node:http2';
+import type * as nodeHttp2 from "node:http2";
+let http2: typeof nodeHttp2 | null = null;
+if (typeof process !== "undefined" && process.versions && process.versions.node) {
+  // Using top-level await (ES modules) to load http2 dynamically
+  http2 = await import("node:http2");
+}
 
 export type ClientConfiguration = {
     tenantIdentifier: string;
@@ -284,9 +290,13 @@ export function createClient(configuration: ClientConfiguration, options?: Creat
             }, IDLE_TIMEOUT);
         };
 
-        const getClient = (origin: string): http2.ClientHttp2Session => {
+        const getClient = (origin: string): nodeHttp2.ClientHttp2Session => {
             if (!clients.has(origin) || clients.get(origin).client.closed) {
                 closeAndDeleteClient(origin);
+                if (!http2) {
+                    // If we requested HTTP/2 but we're not running in Node, throw an error.
+                    throw new Error("HTTP/2 is not available in this environment. Ensure 'useHttp2' is false.");
+                }
                 const client = http2.connect(origin);
                 client.on('error', () => {
                     closeAndDeleteClient(origin);
